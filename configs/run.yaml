@@ -1,0 +1,21 @@
+instrument: "DEMO"         # 模拟的交易品种
+price_tick: 0.01           # 最小价格跳动
+time_unit: "ns"            # 时间单位：纳秒
+
+data:
+  path: "data/sample.csv"  # 数据文件路径
+  schema: "csv_demo"       # 数据文件格式类型
+
+fills:
+  model: "top_of_book"     # 撮合/成交模型
+  pro_rata: true           # 按比例分配成交
+  min_quote_life_us: 500   # 最短挂单寿命（微秒）
+  cancel_cooldown_us: 200  # 撤单冷却时间（微秒）
+
+fees_bps:
+  maker: 0.5               # 挂单费率（基点，万分之5）
+  taker: 1.0               # 吃单费率（基点，万分之10）
+slippage_bps: 0.0          # 额外滑点
+
+bridge:
+  type: "pybind11"         # C++ 和 Python 的桥接方式
