@@ -3,21 +3,14 @@ project(hftsim_engine CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# 撮合引擎
-add_executable(hft_engine
-    src/main.cpp
-    src/OrderBook.cpp
-)
-
-# 策略 runner (ONNXRuntime)
+# 只保留策略 runner (ONNXRuntime)
 add_executable(strategy_runner
     strategy_runner.cpp
     src/OrderBook.cpp
+    src/MarketMaker.cpp
 )
 
 # ====== Include Path ======
-# 本地头文件 (OrderBook.h, Order.h)
-target_include_directories(hft_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(strategy_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ====== ONNXRuntime SDK ======

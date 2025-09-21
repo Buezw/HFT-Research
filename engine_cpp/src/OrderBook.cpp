@@ -13,12 +13,18 @@ long long OrderBook::now_ns() const {
 OrderBook::OrderBook(const std::string& trade_log_path) {
     trade_log.open(trade_log_path, std::ios::out);
     if (trade_log.is_open()) {
-        trade_log << "ts_ns,buy_id,sell_id,price,qty\n"; // CSV 表头
+        trade_log << "ts_ns,buy_id,sell_id,price,qty\n";
+    }
+
+    snapshot_log.open("orderbook_snapshot.csv", std::ios::out);
+    if (snapshot_log.is_open()) {
+        snapshot_log << "ts_ns,side,price,qty\n";
     }
 }
 
 OrderBook::~OrderBook() {
     if (trade_log.is_open()) trade_log.close();
+    if (snapshot_log.is_open()) snapshot_log.close();
 }
 
 // ===== 下单入口 =====
@@ -84,8 +90,10 @@ void OrderBook::cancel_order(int order_id) {
     print_book();
 }
 
-// ===== 打印盘口 =====
+// ===== 打印盘口 & 写快照 =====
 void OrderBook::print_book() const {
+    long long ts = now_ns();
+
     std::cout << "\n--- Order Book Snapshot ---\n";
 
     std::cout << "BUY side:\n";
@@ -94,6 +102,10 @@ void OrderBook::print_book() const {
         std::queue<Order> tmp = q;
         while (!tmp.empty()) { total_qty += tmp.front().qty; tmp.pop(); }
         std::cout << "  " << price << " x " << total_qty << "\n";
+
+        if (snapshot_log.is_open()) {
+            snapshot_log << ts << ",BUY," << price << "," << total_qty << "\n";
+        }
     }
 
     std::cout << "SELL side:\n";
@@ -102,6 +114,10 @@ void OrderBook::print_book() const {
         std::queue<Order> tmp = q;
         while (!tmp.empty()) { total_qty += tmp.front().qty; tmp.pop(); }
         std::cout << "  " << price << " x " << total_qty << "\n";
+
+        if (snapshot_log.is_open()) {
+            snapshot_log << ts << ",SELL," << price << "," << total_qty << "\n";
+        }
     }
 
     std::cout << "----------------------------\n";
@@ -117,6 +133,8 @@ void OrderBook::log_trade(const Order& buy_order, const Order& sell_order, int q
                   << price << ","
                   << qty << "\n";
     }
+
+    trades.push_back({now_ns(), buy_order.id, sell_order.id, price, qty});
 }
 
 // ===== 限价撮合 =====
