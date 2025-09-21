@@ -1,7 +1,3 @@
-明白👌 我来帮你把 **FPGA** 部分作为 **Future Work** 写到 README.md 里，放在合适的位置，强调它是一个潜在的扩展。下面给你一个更新后的 **完整 README**：
-
----
-
 # HFTSim – High-Frequency Trading Simulator
 
 HFTSim is a simplified yet extensible **high-frequency trading (HFT) simulation system** designed for research and demonstration.
