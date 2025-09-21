@@ -3,114 +3,139 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <array>
 #include <algorithm>
 #include <onnxruntime_cxx_api.h>
-#include "OrderBook.h"   // 撮合引擎
-#include "MarketMaker.h" // 市场对手方模拟
+#include "OrderBook.h"
+#include "MarketMaker.h"
+
+// ====== 开关：调试模式（打印/快照/市场日志）。高频仿真请置为 false ======
+static constexpr bool DEBUG_MODE = false;
+
+// ====== 内存中的结果结构 ======
+struct SignalRec {
+    long long ts;
+    double price;
+    int signal; // 0/1/2 → 请按你的模型定义映射
+};
+struct MyTradeRec {
+    long long ts;
+    std::string side; // "BUY"/"SELL"
+    double price;
+    int qty;
+    int buy_id;
+    int sell_id;
+};
 
 int main() {
-    // === 1. 初始化 ONNX Runtime ===
+    // 1) ONNX
     Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "HFTSim");
-    Ort::SessionOptions session_options;
-    session_options.SetIntraOpNumThreads(1);
-    Ort::Session session(env, "py_strategy/lstm_toy.onnx", session_options);
+    Ort::SessionOptions opt;
+    opt.SetIntraOpNumThreads(1);
+    opt.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    Ort::Session sess(env, "py_strategy/lstm_toy.onnx", opt);
+    const char* in_names[]  = {"input"};   // 按你的模型 I/O 名称修改
+    const char* out_names[] = {"output"};
 
-    MarketMaker mm; // 市场对手方
-
-    // === 2. 打开 tick 数据 (CSV) ===
-    std::ifstream fin("data/sample.csv");  // 格式: timestamp,price,volume
-    if (!fin.is_open()) {
-        std::cerr << "Error: could not open data/sample.csv" << std::endl;
-        return -1;
-    }
-
-    std::string line;
-    getline(fin, line); // 跳过表头
-
-    // === 3. 初始化 OrderBook ===
-    OrderBook ob;
+    // 2) 撮合引擎（debug 开关透传）
+    OrderBook ob("data/trades.csv", DEBUG_MODE);
+    MarketMaker mm;
     int next_id = 1;
 
-    // === 4. 打开输出文件 ===
-    std::ofstream fout("output.csv");
-    fout << "timestamp,price,signal\n"; // 写表头
+    // 3) 读取 tick 数据（顶档事件流）
+    std::ifstream fin("data/orderbook_top_ticks.csv");
+    if (!fin.is_open()) {
+        std::cerr << "Error: could not open data/orderbook_top_ticks.csv\n";
+        return -1;
+    }
+    std::string header; std::getline(fin, header); // ts_ns,side,price,qty
 
-    // === 5. 逐 tick 推理 ===
-    while (getline(fin, line)) {
+    std::vector<SignalRec>  signals;
+    std::vector<MyTradeRec> mytrades;
+    signals.reserve(1<<20); // 预留，减少扩容
+    mytrades.reserve(1<<20);
+
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.empty()) continue;
         std::stringstream ss(line);
-        std::string ts_str, price_str, volume_str;
+        std::string ts_str, side_str, price_str, qty_str;
+        std::getline(ss, ts_str, ',');
+        std::getline(ss, side_str, ',');
+        std::getline(ss, price_str, ',');
+        std::getline(ss, qty_str,  ',');
 
-        // 按逗号分隔
-        getline(ss, ts_str, ',');
-        getline(ss, price_str, ',');
-        getline(ss, volume_str, ',');
+        if (ts_str.empty()||side_str.empty()||price_str.empty()||qty_str.empty()) continue;
 
-        if (ts_str.empty() || price_str.empty() || volume_str.empty()) {
-            continue; // 跳过不完整行
-        }
+        long long ts_ns = 0; double price=0.0; double qty=0.0;
+        try { ts_ns = std::stoll(ts_str); price = std::stod(price_str); qty = std::stod(qty_str); }
+        catch (...) { continue; }
 
-        double price = std::stod(price_str);
-        double volume = std::stod(volume_str);
+        // 市场对手方：注入流动性（仅内存操作）
+        mm.injectLiquidity(ob, price, qty, next_id);
 
-        // === 5.1 模拟市场流动性 ===
-        mm.injectLiquidity(ob, price, volume, next_id);
-
-        // === 5.2 构造输入 (4个特征: price, volume, feat3, feat4) ===
-        std::vector<float> input_data = {
-            static_cast<float>(price),
-            static_cast<float>(volume),
-            0.0f,
+        // 构造模型输入特征（示例：price, qty, side_onehot, 0）
+        std::array<float,4> feat {
+            (float)price,
+            (float)qty,
+            (side_str=="BUY")?1.0f:0.0f,
             0.0f
         };
-        std::vector<int64_t> input_shape = {1, 1, 4}; // batch=1, seq=1, features=4
+        const int64_t shape[3] = {1,1,(int64_t)feat.size()};
+        Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value x = Ort::Value::CreateTensor<float>(mem, (float*)feat.data(), feat.size(), shape, 3);
 
-        Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(
-            OrtArenaAllocator, OrtMemTypeDefault
-        );
-        Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-            mem_info,
-            input_data.data(),
-            input_data.size(),
-            input_shape.data(),
-            input_shape.size()
-        );
+        auto outs = sess.Run(Ort::RunOptions{nullptr}, in_names, &x, 1, out_names, 1);
+        auto& o0 = outs.front();
+        float* logits = o0.GetTensorMutableData<float>();
+        size_t C = o0.GetTensorTypeAndShapeInfo().GetElementCount();
+        int signal_idx = (C>0) ? int(std::max_element(logits, logits+C) - logits) : 2; // 默认为 HOLD(2)
 
-        // === 5.3 模型推理 ===
-        const char* input_names[] = {"input"};
-        const char* output_names[] = {"output"};
+        // 记录信号（仅内存）
+        signals.push_back({ts_ns, price, signal_idx});
 
-        auto output_tensors = session.Run(
-            Ort::RunOptions{nullptr},
-            input_names, &input_tensor, 1,
-            output_names, 1
-        );
-
-        float* output_arr = output_tensors.front().GetTensorMutableData<float>();
-        size_t out_len = output_tensors.front().GetTensorTypeAndShapeInfo().GetElementCount();
-
-        // === 6. 转换为交易信号 ===
-        int signal_idx = std::max_element(output_arr, output_arr + out_len) - output_arr;
-
-        if (signal_idx == 0) {
-            std::cout << "[" << ts_str << "] Signal = BUY @ " << price << std::endl;
-            ob.add_order({next_id++, "BUY", "LIMIT", price, 10});
-        } else if (signal_idx == 1) {
-            std::cout << "[" << ts_str << "] Signal = SELL @ " << price << std::endl;
-            ob.add_order({next_id++, "SELL", "LIMIT", price, 10});
-        } else {
-            std::cout << "[" << ts_str << "] Signal = HOLD" << std::endl;
+        if (DEBUG_MODE) {
+            if (signal_idx==0) std::cout<<"["<<ts_ns<<"] BUY @ "<<price<<"\n";
+            else if (signal_idx==1) std::cout<<"["<<ts_ns<<"] SELL @ "<<price<<"\n";
+            else std::cout<<"["<<ts_ns<<"] HOLD\n";
         }
 
-        // === 7. 写入日志文件 ===
-        fout << ts_str << "," << price << "," << signal_idx << "\n";
-
-        // === 8. 打印订单簿状态 (可选) ===
-        ob.print_book();
+        // 根据信号下单（仅内存撮合）
+        if (signal_idx == 0) { // BUY
+            TradeResult tr = ob.add_order({next_id++, "BUY", "LIMIT", price, 10, ts_ns});
+            if (tr.executed) {
+                mytrades.push_back({ts_ns, "BUY", tr.price, tr.qty, tr.buy_order_id, tr.sell_order_id});
+            }
+        } else if (signal_idx == 1) { // SELL
+            TradeResult tr = ob.add_order({next_id++, "SELL", "LIMIT", price, 10, ts_ns});
+            if (tr.executed) {
+                mytrades.push_back({ts_ns, "SELL", tr.price, tr.qty, tr.buy_order_id, tr.sell_order_id});
+            }
+        }
+        // HOLD 不下单
     }
-
-    fout.close();
     fin.close();
 
-    std::cout << "Simulation finished. Results saved to output.csv" << std::endl;
+    // 4) 一次性写出结果（避免运行期 I/O 阻塞）
+    {
+        std::ofstream f("data/signals_buy.csv", std::ios::out);
+        f << "timestamp,price,signal\n";
+        for (const auto& r : signals) {
+            f << r.ts << "," << r.price << "," << r.signal << "\n";
+        }
+    }
+    {
+        std::ofstream f("data/trades_executed.csv", std::ios::out);
+        f << "ts_ns,side,price,qty,buy_id,sell_id\n";
+        for (const auto& t : mytrades) {
+            f << t.ts << "," << t.side << "," << t.price << "," << t.qty
+              << "," << t.buy_id << "," << t.sell_id << "\n";
+        }
+    }
+
+    if (DEBUG_MODE) {
+        std::cout << "[runner] signals: " << signals.size()
+                  << " , my_trades: " << mytrades.size() << "\n";
+    }
     return 0;
 }

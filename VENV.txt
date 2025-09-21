@@ -1,1 +1,1 @@
-source ~/.venvs/HFTSim/bin/activate
+conda activate hftsim

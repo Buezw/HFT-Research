@@ -10,40 +10,46 @@ long long OrderBook::now_ns() const {
 }
 
 // ===== 构造 & 析构 =====
-OrderBook::OrderBook(const std::string& trade_log_path) {
-    trade_log.open(trade_log_path, std::ios::out);
-    if (trade_log.is_open()) {
-        trade_log << "ts_ns,buy_id,sell_id,price,qty\n";
-    }
-
-    snapshot_log.open("orderbook_snapshot.csv", std::ios::out);
-    if (snapshot_log.is_open()) {
-        snapshot_log << "ts_ns,side,price,qty\n";
+OrderBook::OrderBook(const std::string& trade_log_path, bool debug) : debug_mode(debug) {
+    if (debug_mode) {
+        trade_log.open(trade_log_path, std::ios::out);
+        if (trade_log.is_open()) {
+            trade_log << "ts_ns,buy_id,sell_id,price,qty\n";
+        }
+        snapshot_log.open("orderbook_snapshot.csv", std::ios::out);
+        if (snapshot_log.is_open()) {
+            snapshot_log << "ts_ns,side,price,qty\n";
+        }
     }
 }
 
 OrderBook::~OrderBook() {
-    if (trade_log.is_open()) trade_log.close();
+    if (trade_log.is_open())    trade_log.close();
     if (snapshot_log.is_open()) snapshot_log.close();
 }
 
-// ===== 下单入口 =====
-void OrderBook::add_order(Order order) {
+// ===== 下单入口（返回最近一次撮合结果）=====
+TradeResult OrderBook::add_order(Order order) {
     if (order.ts_ns == 0) {
         order.ts_ns = now_ns();
     }
 
+    TradeResult result;
+
     if (order.type == "MARKET") {
-        execute_market_order(order);
-    } else {
+        result = execute_market_order(order);
+    } else { // LIMIT
         if (order.side == "BUY") {
             buy_orders[order.price].push(order);
         } else {
             sell_orders[order.price].push(order);
         }
-        match();
+        result = match();
     }
+
+    // 仅调试时打印盘口
     print_book();
+    return result;
 }
 
 // ===== 撤单 =====
@@ -51,13 +57,15 @@ void OrderBook::cancel_order(int order_id) {
     bool found = false;
 
     // 买单簿
-    for (auto it = buy_orders.begin(); it != buy_orders.end(); ) {
+    for (auto it = buy_orders.begin(); it != buy_orders.end();) {
         std::queue<Order> new_q;
         while (!it->second.empty()) {
             Order o = it->second.front(); it->second.pop();
             if (o.id == order_id) {
-                std::cout << "CANCEL: BUY#" << o.id 
-                          << " @ " << o.price << " x " << o.qty << "\n";
+                if (debug_mode) {
+                    std::cout << "CANCEL: BUY#" << o.id 
+                              << " @ " << o.price << " x " << o.qty << "\n";
+                }
                 found = true;
             } else {
                 new_q.push(o);
@@ -68,13 +76,15 @@ void OrderBook::cancel_order(int order_id) {
     }
 
     // 卖单簿
-    for (auto it = sell_orders.begin(); it != sell_orders.end(); ) {
+    for (auto it = sell_orders.begin(); it != sell_orders.end();) {
         std::queue<Order> new_q;
         while (!it->second.empty()) {
             Order o = it->second.front(); it->second.pop();
             if (o.id == order_id) {
-                std::cout << "CANCEL: SELL#" << o.id 
-                          << " @ " << o.price << " x " << o.qty << "\n";
+                if (debug_mode) {
+                    std::cout << "CANCEL: SELL#" << o.id 
+                              << " @ " << o.price << " x " << o.qty << "\n";
+                }
                 found = true;
             } else {
                 new_q.push(o);
@@ -84,14 +94,16 @@ void OrderBook::cancel_order(int order_id) {
         else { it->second = std::move(new_q); ++it; }
     }
 
-    if (!found) {
+    if (debug_mode && !found) {
         std::cout << "Order ID " << order_id << " not found.\n";
     }
     print_book();
 }
 
-// ===== 打印盘口 & 写快照 =====
+// ===== 打印盘口 & 写快照（仅 debug 模式）=====
 void OrderBook::print_book() const {
+    if (!debug_mode) return;
+
     long long ts = now_ns();
 
     std::cout << "\n--- Order Book Snapshot ---\n";
@@ -123,10 +135,11 @@ void OrderBook::print_book() const {
     std::cout << "----------------------------\n";
 }
 
-// ===== 成交日志 =====
+// ===== 成交日志（仅 debug 模式写文件，但总是 push 到内存）=====
 void OrderBook::log_trade(const Order& buy_order, const Order& sell_order, int qty, double price) {
+    const long long ts = now_ns();
+
     if (trade_log.is_open()) {
-        long long ts = now_ns();
         trade_log << ts << ","
                   << buy_order.id << ","
                   << sell_order.id << ","
@@ -134,11 +147,19 @@ void OrderBook::log_trade(const Order& buy_order, const Order& sell_order, int q
                   << qty << "\n";
     }
 
-    trades.push_back({now_ns(), buy_order.id, sell_order.id, price, qty});
+    trades.push_back({ts, buy_order.id, sell_order.id, price, qty});
+
+    if (debug_mode) {
+        std::cout << "TRADE: " << qty
+                  << " @ " << price
+                  << " between BUY#" << buy_order.id
+                  << " and SELL#" << sell_order.id << "\n";
+    }
 }
 
-// ===== 限价撮合 =====
-void OrderBook::match() {
+// ===== 限价撮合（返回最近一次成交）=====
+TradeResult OrderBook::match() {
+    TradeResult result;
     while (!buy_orders.empty() && !sell_orders.empty()) {
         auto best_buy_it  = buy_orders.begin();
         auto best_sell_it = sell_orders.begin();
@@ -149,14 +170,12 @@ void OrderBook::match() {
             Order buy_order  = best_buy_it->second.front();
             Order sell_order = best_sell_it->second.front();
 
-            int trade_qty = std::min(buy_order.qty, sell_order.qty);
-            std::cout << "TRADE: " << trade_qty
-                      << " @ " << sell_price
-                      << " between BUY#" << buy_order.id
-                      << " and SELL#" << sell_order.id << "\n";
-
+            const int trade_qty = std::min(buy_order.qty, sell_order.qty);
             log_trade(buy_order, sell_order, trade_qty, sell_price);
 
+            result = {true, sell_price, trade_qty, buy_order.id, sell_order.id};
+
+            // 扣减并维护队列
             buy_order.qty  -= trade_qty;
             sell_order.qty -= trade_qty;
 
@@ -171,21 +190,22 @@ void OrderBook::match() {
             break;
         }
     }
+    return result;
 }
 
-// ===== 市价撮合 =====
-void OrderBook::execute_market_order(Order order) {
+// ===== 市价撮合（返回最近一次成交）=====
+TradeResult OrderBook::execute_market_order(Order order) {
+    TradeResult result;
+
     if (order.side == "BUY") {
         while (order.qty > 0 && !sell_orders.empty()) {
             auto best_sell_it = sell_orders.begin();
             Order sell_order  = best_sell_it->second.front();
 
-            int trade_qty = std::min(order.qty, sell_order.qty);
-            std::cout << "MARKET BUY TRADE: " << trade_qty
-                      << " @ " << sell_order.price
-                      << " with SELL#" << sell_order.id << "\n";
-
+            const int trade_qty = std::min(order.qty, sell_order.qty);
             log_trade(order, sell_order, trade_qty, sell_order.price);
+
+            result = {true, sell_order.price, trade_qty, order.id, sell_order.id};
 
             order.qty      -= trade_qty;
             sell_order.qty -= trade_qty;
@@ -199,12 +219,10 @@ void OrderBook::execute_market_order(Order order) {
             auto best_buy_it = buy_orders.begin();
             Order buy_order  = best_buy_it->second.front();
 
-            int trade_qty = std::min(order.qty, buy_order.qty);
-            std::cout << "MARKET SELL TRADE: " << trade_qty
-                      << " @ " << buy_order.price
-                      << " with BUY#" << buy_order.id << "\n";
-
+            const int trade_qty = std::min(order.qty, buy_order.qty);
             log_trade(buy_order, order, trade_qty, buy_order.price);
+
+            result = {true, buy_order.price, trade_qty, buy_order.id, order.id};
 
             order.qty     -= trade_qty;
             buy_order.qty -= trade_qty;
@@ -215,7 +233,9 @@ void OrderBook::execute_market_order(Order order) {
         }
     }
 
-    if (order.qty > 0) {
+    if (debug_mode && order.qty > 0) {
         std::cout << "MARKET order unfilled qty: " << order.qty << " discarded.\n";
     }
+
+    return result;
 }
