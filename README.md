@@ -1,7 +1,3 @@
-Here’s a clean, English **README.md** you can drop into the repo.
-
----
-
 # 📈 HFTSim – High-Frequency Trading Simulator
 
 HFTSim is a compact, extensible **high-frequency trading (HFT) simulation stack** for research and demos.

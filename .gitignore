@@ -4,3 +4,4 @@ build/
 __pycache__/
 .vscode/
 py_strategy/miniconda.sh
+data/
