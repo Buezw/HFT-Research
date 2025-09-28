@@ -72,6 +72,52 @@ pip install -r requirements.txt
 
 ---
 
+## Models
+
+Models
+├── Traditional Statistical Models
+│   ├── Linear Regression
+│   ├── Logistic Regression
+│   ├── ARIMA (time-series forecasting)
+│   ├── GARCH (volatility modeling)
+│   ├── Cointegration (pairs trading)
+│   └── Kalman Filter (state-space models)
+│
+├── Tree-Based Models
+│   ├── Decision Trees
+│   ├── Random Forest
+│   ├── Gradient Boosted Trees
+│   │    ├── XGBoost
+│   │    ├── LightGBM
+│   │    └── CatBoost
+│   └── ExtraTrees
+│
+├── Classical Machine Learning
+│   ├── KNN
+│   ├── Naive Bayes
+│   ├── SVM
+│   ├── PCA/ICA (dimensionality reduction)
+│   └── Clustering (KMeans, DBSCAN)
+│
+├── Deep Learning
+│   ├── RNNs (LSTM, GRU)
+│   ├── CNNs (1D-CNN, TCN)
+│   ├── Transformers (Informer, TimesNet)
+│   └── Hybrid models (CNN+Transformer, LSTM+Attention)
+│
+├── Generative / Probabilistic
+│   ├── Hidden Markov Models
+│   ├── Variational Autoencoders
+│   ├── GANs
+│   └── Bayesian hierarchical models
+│
+└── Reinforcement Learning
+    ├── Q-Learning
+    ├── Deep Q-Networks
+    ├── Policy Gradient
+    └── Actor-Critic (A2C, PPO)
+
+
 ## 🚀 Quick start
 
 ### 1) Prepare data
