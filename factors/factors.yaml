@@ -1,0 +1,6 @@
+factors:
+  - name: momentum_5
+  - name: momentum_20
+  - name: order_imbalance
+  - name: spread
+  - name: realized_vol_20
