@@ -1,0 +1,19 @@
+body{font-family:Arial, sans-serif; margin:20px; background:#111; color:#fff;}
+h1{margin-bottom:14px}
+#layout{display:flex; gap:20px; align-items:flex-start;}
+.panel{background:#1c1c1c; padding:15px; border-radius:8px; margin-bottom:20px;}
+#sidebar{flex:1} #factor-panel{flex:2} #model-panel{flex:1}
+.card{background:#222; padding:10px; border-radius:6px; margin:10px 0}
+.row{display:flex; gap:8px; align-items:center; margin-bottom:6px}
+.row>label{width:90px; color:#ddd}
+.row>input{flex:1}
+.btns{display:flex; gap:8px}
+.btn{padding:8px; border-radius:6px; border:0; cursor:pointer}
+.btn.primary{background:#0a84ff; color:#fff}
+.btn.success{background:#22c55e; color:#fff}
+.status{margin-top:10px; opacity:.85}
+.chart{margin-top:10px}
+.muted{color:#aaa}
+.kpi{display:flex; gap:12px; flex-wrap:wrap; margin:10px 0}
+.metric{background:#222; padding:8px 10px; border-radius:6px}
+.metric small{color:#aaa; display:block}

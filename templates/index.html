@@ -1,85 +1,110 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Factors Directory</title>
-  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-  <script id="MathJax-script" async
-          src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
-  </script>
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-  <style>
-    body { font-family: Arial, sans-serif; display: flex; margin:0; }
-    #sidebar { width: 250px; padding: 10px; background: #111; color: #eee; height:100vh; overflow:auto; }
-    #sidebar h3 { margin-top: 20px; }
-    #content { flex: 1; padding: 20px; }
-    .factor-btn { display: block; margin: 5px 0; padding: 5px; background: #222; color: #eee; border: none; cursor: pointer; width:100%; text-align:left; }
-    .factor-btn:hover { background: #444; }
-  </style>
+  <title>HFTSim Explorer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <!-- 本地脚本都放在 templates/js 下 -->
+  <script src="/js/polyfill.min.js"></script>
+  <script src="/js/plotly.min.js"></script>
+  <!-- 如果你要渲染 LaTeX 公式，保留 MathJax；不用就删掉 -->
+  <script src="/js/mathjax.js"></script>
+
+  <!-- 本地样式在 templates/css 下 -->
+  <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
-  <div id="sidebar"></div>
-  <div id="content"><h2>Select a factor</h2></div>
+<body style="font-family: Arial, sans-serif; margin: 20px; background:#111; color:white;">
+  <h1>HFTSim Factor & Model Explorer</h1>
 
-  <script>
-    async function loadFactors() {
-      const res = await fetch("/api/factors");
-      const data = await res.json();
-      console.log("Factors loaded:", data);
+  <div style="display:flex; gap:20px; align-items:flex-start;">
+    <!-- Sidebar -->
+    <div style="flex:1; background:#181818; padding:15px; border-radius:8px;">
+      <h3>因子分类</h3>
+      <div id="factor-categories"></div>
+    </div>
 
-      // group factors by category
-      const categories = {};
-      for (const [name, meta] of Object.entries(data)) {
-        if (!categories[meta.category]) categories[meta.category] = [];
-        categories[meta.category].push({name, ...meta});
-      }
+    <!-- Factor details -->
+    <div style="flex:2; background:#1c1c1c; padding:15px; border-radius:8px;">
+      <h2 id="factor-title">请选择一个因子</h2>
+      <p><b>Description:</b> <span id="factor-desc"></span></p>
+      <p><b>Formula:</b> <span id="factor-formula"></span></p>
+      <p><b>Explanation:</b> <span id="factor-explanation"></span></p>
+      <div id="plot" style="height:400px;"></div>
+    </div>
 
-      // build sidebar
-      const sidebar = document.getElementById("sidebar");
-      for (const [cat, items] of Object.entries(categories)) {
-        const h = document.createElement("h3");
-        h.innerText = cat;
-        sidebar.appendChild(h);
+    <!-- Model section -->
+    <div style="flex:1; background:#1c1c1c; padding:15px; border-radius:8px;">
+      <h2>Select Model</h2>
+      <select id="model-select" style="width:100%; margin-bottom:8px;"></select>
 
-        items.forEach(f => {
-          const btn = document.createElement("button");
-          btn.innerText = f.name;
-          btn.className = "factor-btn";
-          btn.onclick = () => showDetail(f);
-          sidebar.appendChild(btn);
-        });
-      }
-    }
+      <div style="margin:10px 0; padding:10px; background:#222; border-radius:6px;">
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <label style="width:90px;">horizon</label>
+          <input id="inp-horizon" type="number" min="1" step="1" value="5" style="flex:1;">
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <label style="width:90px;">eps</label>
+          <input id="inp-eps" type="number" step="0.0001" value="0.0" style="flex:1;">
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <label style="width:90px;">drop_equal</label>
+          <input id="inp-drop-equal" type="checkbox">
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <label style="width:90px;">test_size</label>
+          <input id="inp-test-size" type="number" step="0.05" min="0.05" max="0.5" value="0.2" style="flex:1;" disabled>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <label style="width:90px;">scale</label>
+          <input id="inp-scale" type="checkbox" checked>
+        </div>
+      </div>
 
-    async function showDetail(factor) {
-      const content = document.getElementById("content");
-      content.innerHTML = `
-        <h2>${factor.name}</h2>
-        <p><b>Description:</b> ${factor.desc}</p>
-        <p><b>Formula:</b> \\(${factor.formula}\\)</p>
-        <p><b>Explanation:</b> ${factor.explanation}</p>
-        <div id="chart" style="width:100%;height:400px;"></div>
-      `;
-      MathJax.typeset();
+      <div style="display:flex; gap:8px;">
+        <button id="btn-train" onclick="HFT.trainModel()" style="flex:1; padding:8px; border-radius:6px; background:#0a84ff; color:white; border:0; cursor:pointer;">
+          Train
+        </button>
+        <button id="btn-backtest" onclick="HFT.backtestModel()" style="flex:1; padding:8px; border-radius:6px; background:#22c55e; color:white; border:0; cursor:pointer;">
+          Backtest (5:1)
+        </button>
+      </div>
 
-      // fetch factor time series
-      const res = await fetch(`/api/compute?factor=${factor.name}`);
-      const data = await res.json();
+      <div id="train-status" style="margin-top:10px; opacity:.85;"></div>
 
-      Plotly.newPlot("chart", [{
-        x: data.x,
-        y: data.y,
-        yaxis: { tickformat: ".2e" } ,
-        type: "scatter",
-        mode: "lines",
-        line: {color: "steelblue"}
-      }], {
-        margin: {t: 30},
-        title: `${factor.name} over time`
-      });
-    }
+      <div id="model-result" style="margin-top:12px; padding:10px; background:#222; border-radius:6px;">
+        <p style="margin:0 0 6px 0;"><b>Model:</b> <span id="model-name">-</span></p>
+        <p style="margin:0 0 6px 0;"><b>Task:</b> <span id="model-task">-</span></p>
+        <p style="margin:0 0 6px 0;"><b>Accuracy:</b> <span id="model-acc">-</span></p>
+        <p style="margin:0;"><b>AUC:</b> <span id="model-auc">-</span></p>
+        <p id="deg-note" style="margin:6px 0 0 0; color:#aaa;"></p>
+      </div>
 
-    loadFactors();
-  </script>
+      <div id="roc-plot" style="height:300px; margin-top:15px;"></div>
+    </div>
+  </div>
+
+  <!-- Backtest panels -->
+  <div style="margin-top:20px; background:#1c1c1c; padding:15px; border-radius:8px;">
+    <h2>Backtest (Test 1/6)</h2>
+    <div id="backtest-status" style="margin-bottom:10px; opacity:.85;"></div>
+
+    <div id="kpi" style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px;"></div>
+
+    <div id="pnl-plot" style="height:300px; margin-bottom:16px;"></div>
+    <div id="dd-plot"  style="height:220px; margin-bottom:16px;"></div>
+    <div id="pred-plot" style="height:260px; margin-bottom:16px;"></div>
+    <div id="pr-plot"   style="height:260px; margin-bottom:16px;"></div>
+    <div id="calib-plot" style="height:260px; margin-bottom:16px;"></div>
+    <div id="cm-plot"   style="height:300px; margin-bottom:16px;"></div>
+    <div id="hist-plot" style="height:240px;"></div>
+  </div>
+
+  <!-- 你的业务脚本也都在 templates/js 下 -->
+  <script src="/js/app.js"></script>
+  <script src="/js/kpi.js"></script>
+  <script src="/js/factors.js"></script>
+  <script src="/js/models.js"></script>
+  <script src="/js/backtest.js"></script>
 </body>
 </html>

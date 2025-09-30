@@ -1,51 +1,57 @@
 # experiments/train.py
+import argparse, os, json
 import pandas as pd
 import yaml
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score
+from experiments.pipeline import train_once, save_artifacts  # 仅在 experiments 内部复用
 
-from factors.engine import compute_factors
-from models.linear.logistic import LogitModel
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default="data/orderbook_top_ticks.csv")
+    ap.add_argument("--model", default="logit")
+    ap.add_argument("--factors", default="", help="逗号分隔因子名；留空则读 YAML")
+    ap.add_argument("--factors_cfg", default="configs/factors.yaml")
+    ap.add_argument("--horizon", type=int, default=5)
+    ap.add_argument("--eps", type=float, default=0.0)
+    ap.add_argument("--drop_equal", action="store_true")
+    ap.add_argument("--scale", action="store_true")
+    ap.add_argument("--test_size", type=float, default=1.0/6.0, help="默认 5:1 切分 → 1/6")
+    ap.add_argument("--outdir", default="artifacts/latest")
+    args = ap.parse_args()
 
-# ===== Step 1. 数据准备 =====
-df = pd.read_csv("data/orderbook_top_ticks.csv")
+    df = pd.read_csv(args.data)
 
-# 拆分买卖盘，确保行数对齐
-df_buy = df[df["side"] == "BUY"].reset_index(drop=True)
-df_sell = df[df["side"] == "SELL"].reset_index(drop=True)
+    if args.factors.strip():
+        factor_names = [s.strip() for s in args.factors.split(",") if s.strip()]
+    else:
+        try:
+            cfg = yaml.safe_load(open(args.factors_cfg))
+            factor_names = [f["name"] for f in cfg["factors"]]
+        except Exception:
+            factor_names = ["momentum_5"]
 
-# 计算 midprice = (买一价 + 卖一价) / 2
-df_mid = pd.DataFrame()
-df_mid["ts_ns"] = df_buy["ts_ns"]
-df_mid["midprice"] = (df_buy["price"] + df_sell["price"]) / 2
-df_mid["close"] = df_mid["midprice"]   # 👈 兼容旧因子实现
+    res = train_once(
+        df_ticks=df,
+        factor_names=factor_names,
+        model_name=args.model,
+        horizon=args.horizon,
+        eps=args.eps,
+        drop_equal=args.drop_equal,
+        test_size=args.test_size,
+        scale=args.scale,
+    )
 
-# 定义标签：下一步 midprice 是否上涨
-df_mid["y"] = (df_mid["midprice"].shift(-1) > df_mid["midprice"]).astype(int)
+    os.makedirs(args.outdir, exist_ok=True)
+    save_artifacts(args.outdir, res, extra_meta={
+        "factors": factor_names,
+        "horizon": args.horizon,
+        "eps": args.eps,
+        "test_size": args.test_size
+    })
 
-# ===== Step 2. 计算因子 =====
-cfg = yaml.safe_load(open("configs/factors.yaml"))
-factor_names = [f["name"] for f in cfg["factors"]]
+    # 训练结果简报（给 API 读取）
+    with open(os.path.join(args.outdir, "meta.json"), "r") as f:
+        meta = json.load(f)
+    print(json.dumps(meta))  # stdout 打印 JSON，API 可忽略也可解析
 
-X = compute_factors(df_mid, factor_names).fillna(0)
-y = df_mid["y"].fillna(0)
-
-# 如果没有算出任何因子，直接报错
-if X.shape[1] == 0:
-    raise ValueError("No factors were successfully computed. Check your factors/ implementation.")
-
-# ===== Step 3. 切分训练/测试 =====
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, shuffle=False, test_size=0.2
-)
-
-# ===== Step 4. 选择模型 =====
-model = LogitModel()  # 或者换成 XGBModel()
-model.fit(X_train, y_train)
-
-# ===== Step 5. 预测 & 评估 =====
-y_pred = model.predict(X_test)
-y_prob = model.predict_proba(X_test)
-
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("AUC:", roc_auc_score(y_test, y_prob))
+if __name__ == "__main__":
+    main()

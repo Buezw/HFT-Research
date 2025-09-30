@@ -1,36 +1,25 @@
 # models/base.py
-from abc import ABC, abstractmethod
-import numpy as np
-import pandas as pd
+# Model registry for HFTSim
+MODEL_REGISTRY = {}
 
-class BaseModel(ABC):
+def register_model(name: str, desc: str, task: str = "classification"):
     """
-    All models in HFTSim should inherit from this interface.
-    This ensures a consistent API across linear, tree, ML, DL, and RL models.
+    Decorator to register a model class.
+    - name: short name of the model
+    - desc: description of the model
+    - task: type of task ("classification" or "regression")
     """
+    def decorator(cls):
+        MODEL_REGISTRY[name] = {
+            "name": name,
+            "desc": desc,
+            "task": task,
+            "class": cls
+        }
+        return cls
+    return decorator
 
-    @abstractmethod
-    def fit(self, X: pd.DataFrame, y: pd.Series):
-        """
-        Train the model on historical data.
-        X : pd.DataFrame of features
-        y : pd.Series of labels (e.g., direction or returns)
-        """
-        pass
 
-    @abstractmethod
-    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        """
-        Return predicted probabilities (if applicable).
-        Example: probability of upward move in [0,1].
-        If the model does not support probability, raise NotImplementedError.
-        """
-        pass
-
-    def predict(self, X: pd.DataFrame, thr: float = 0.5) -> np.ndarray:
-        """
-        Return discrete predictions (0/1 or -1/1 depending on convention).
-        By default: classify as 1 if proba >= thr, else 0.
-        """
-        proba = self.predict_proba(X)
-        return (proba >= thr).astype(int)
+def get_all_models():
+    """Return all registered models (with class objects)"""
+    return MODEL_REGISTRY
